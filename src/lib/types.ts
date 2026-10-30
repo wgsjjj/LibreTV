@@ -202,7 +202,7 @@ export type SubscriptionSkipReason =
   | 'xml'
   /** 站点自身标记为不可搜索（本站只有搜索入口，导入后无法使用） */
   | 'unsearchable'
-  /** 直播源不是 M3U 播放列表（如 txt 频道列表、单仓 JSON） */
+  /** 直播源不是 M3U/txt 播放列表（如单仓 JSON） */
   | 'nonM3uLive'
   /** 接口目录条目自身标记 enabled: false（发布者主动停用，不是异常） */
   | 'disabled'

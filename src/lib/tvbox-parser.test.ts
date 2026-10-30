@@ -103,7 +103,7 @@ describe('parseTvboxPayload', () => {
     expect(result.stats?.skippedByReason).toEqual({ unsearchable: 1 });
   });
 
-  it('直播：单仓 JSON 与 txt 频道列表跳过，非 M3U 地址计入 invalidUrl', () => {
+  it('直播：单仓 JSON 跳过，txt 频道列表与 M3U 一并导入，非 M3U 地址计入 invalidUrl', () => {
     const result = parseTvboxPayload({
       sites: [vodSite('https://a.example.com/api.php/provide/vod')],
       lives: [
@@ -114,9 +114,9 @@ describe('parseTvboxPayload', () => {
       ],
     });
 
-    expect(result.liveSources.map((s) => s.name)).toEqual(['直播A']);
-    expect(result.stats?.skipped).toBe(3);
-    expect(result.stats?.skippedByReason).toEqual({ nonM3uLive: 2, invalidUrl: 1 });
+    expect(result.liveSources.map((s) => s.name)).toEqual(['直播A', 'txt列表']);
+    expect(result.stats?.skipped).toBe(2);
+    expect(result.stats?.skippedByReason).toEqual({ nonM3uLive: 1, invalidUrl: 1 });
   });
 
   it('按地址去重（点播去尾部斜杠后比较，直播保留原样）', () => {
