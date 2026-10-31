@@ -45,9 +45,9 @@ function engineOf(url: string): Engine {
   if (isFlvUrl(url)) return 'flv';
   if (isTsUrl(url)) return 'mpegts';
   if (NATIVE_MEDIA_RE.test(url)) return 'native';
-  // 无后缀 / 未知后缀：经验上多为 TS/FLV（组播转单播、IPTV 中转等），
-  // 直接走 mpegts 先试，比"hls 加载失败再回退"快得多；mpegts 失败会再回退 hls。
-  return 'mpegts';
+  // 无后缀 / 未知后缀：默认按 HLS 尝试（兼容"302→m3u8"的中转源，如咪咕签名流）。
+  // 若实为 TS/FLV，hls manifest 解析会快速失败并立即回退 mpegts（见 setupHls 的 ERROR 分支）。
+  return 'hls';
 }
 
 function proxyUrl(url: string): string {
@@ -205,9 +205,10 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
           return;
         }
         if (!playbackStarted) {
-          // 无明确后缀的地址（实为 TS/FLV 的可能性高）：跳过代理直接回退 mpegts，省掉一整轮代理等待
+          // 无明确后缀 + manifest 解析失败：内容大概率是 TS/FLV（hls.js 拿到的不是 m3u8），
+          // 直接回退 mpegts，跳过代理（代理对 TS 无意义）
           const hasExplicitSuffix = /\.(m3u8?|flv|ts|m2ts|mp4|m4v|webm|ogv|ogg|mov)(\?|$)/i.test(url);
-          if (!hasExplicitSuffix) {
+          if (!hasExplicitSuffix && data.details === 'manifestParsingError') {
             showHint('尝试按流媒体格式解析...');
             void setupMpegts(video, url, true, 'mpegts', 'flv');
             return;
