@@ -45,8 +45,10 @@ function engineOf(url: string): Engine {
   if (isFlvUrl(url)) return 'flv';
   if (isTsUrl(url)) return 'mpegts';
   if (NATIVE_MEDIA_RE.test(url)) return 'native';
-  // 无后缀 / 未知后缀：默认按 HLS 尝试，失败后由运行时回退链接管（见 setupHls 的 ERROR 分支）
-  return 'hls';
+  // 无后缀 / 未知后缀：优先按 mpegts(TS) 尝试，实现秒播。
+  // 国内 IPTV 中转源（组播转单播、171751 等）多为 TS；若实为 HLS/FLV/MP4，
+  // mpegts 失败会回退 flv → hls → native（见 setupMpegts 的回退链）。
+  return 'mpegts';
 }
 
 function proxyUrl(url: string): string {
@@ -239,8 +241,10 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       mediaUrl: string,
       allowProxyFallback: boolean,
       mediaType: 'flv' | 'mpegts',
-      // 类型回退链：mpegts 失败可继续尝试 flv，flv 失败不再尝试（交给原生兜底）
-      nextType?: 'flv' | 'mpegts'
+      // 类型回退链：mpegts 失败可继续尝试 flv，flv 失败不再尝试（交给 hls/原生兜底）
+      nextType?: 'flv' | 'mpegts',
+      // TS/FLV 都失败后是否回退 HLS（无后缀的源也可能是带 token 的 HLS）
+      fallbackToHls = false
     ) => {
       cleanupEngines();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -277,16 +281,22 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
         if (disposed || destroyed) return;
         if (!playbackStarted && allowProxyFallback && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
           showHint('直连失败，改用代理重试...');
-          void setupMpegts(video, proxyUrl(url), false, mediaType, nextType);
+          void setupMpegts(video, proxyUrl(url), false, mediaType, nextType, fallbackToHls);
           return;
         }
         // 当前类型失败：按类型回退链继续尝试另一种封装（无后缀的流可能是 TS 也可能是 FLV）
         if (!playbackStarted && nextType && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
           showHint('该格式未命中，尝试另一种流媒体封装...');
-          void setupMpegts(video, url, false, nextType);
+          void setupMpegts(video, url, false, nextType, undefined, fallbackToHls);
           return;
         }
-        // mpegts/flv 均失败：最后回退原生播放（覆盖"无后缀但实为 MP4"的源）
+        // TS/FLV 均失败：无后缀源可能是带 token 的 HLS，回退 hls 试一次
+        if (!playbackStarted && fallbackToHls && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
+          showHint('流媒体未命中，尝试 HLS...');
+          setupHls(video, url, 'direct');
+          return;
+        }
+        // 最后回退原生播放（覆盖"无后缀但实为 MP4"的源）
         if (!playbackStarted && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
           showHint('流媒体解析失败，尝试原生播放...');
           setupNative(video, url, false, `直播流加载失败（${errType}），可能该频道已失效，请尝试其他频道`);
@@ -362,8 +372,8 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
           void setupMpegts(video, url, true, 'flv', 'mpegts');
         },
         mpegts: (video: HTMLVideoElement) => {
-          // 明确 TS/udp 流：先按 mpegts，失败回退 flv
-          void setupMpegts(video, url, true, 'mpegts', 'flv');
+          // 明确 TS/udp 或无后缀流：先按 mpegts，失败回退 flv，再回退 hls（覆盖无后缀实为 HLS 的源）
+          void setupMpegts(video, url, true, 'mpegts', 'flv', true);
         },
         mp4: (video: HTMLVideoElement) => {
           setupNative(video, url, true);
@@ -403,34 +413,8 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
     }, 15000);
     };
 
-    // 无明确后缀的地址：先快速探测 Content-Type，若实为 TS/FLV 直接走 mpegts（秒播的关键）。
-    // 探测失败或超时则维持默认 hls，不影响正常 HLS 源。
-    const explicitSuffix = /\.(m3u8?|flv|ts|m2ts|mp4|m4v|webm|ogv|ogg|mov)(\?|$)/i;
-    const needsProbe = engineOf(url) === 'hls' && !explicitSuffix.test(url);
-
-    if (!needsProbe) {
-      startPlayback(engineOf(url));
-    } else {
-      // 快速 HEAD 探测：3 秒超时，拿不到就用默认 hls
-      const probeController = new AbortController();
-      const probeTimer = setTimeout(() => probeController.abort(), 3000);
-      fetch(url, { method: 'HEAD', signal: probeController.signal })
-        .then((res) => {
-          clearTimeout(probeTimer);
-          const ct = res.headers.get('content-type') || '';
-          if (ct.includes('video/mp2t') || ct.includes('video/mpeg')) {
-            startPlayback('mpegts');
-          } else if (ct.includes('video/x-flv') || ct.includes('video/flv')) {
-            startPlayback('flv');
-          } else {
-            startPlayback('hls');
-          }
-        })
-        .catch(() => {
-          clearTimeout(probeTimer);
-          startPlayback('hls');
-        });
-    }
+    // 直接按 engineOf 结果启动（无后缀已默认走 mpegts 实现秒播，失败会回退 hls/flv/native）
+    startPlayback(engineOf(url));
 
     return () => {
       disposed = true;
