@@ -45,10 +45,8 @@ function engineOf(url: string): Engine {
   if (isFlvUrl(url)) return 'flv';
   if (isTsUrl(url)) return 'mpegts';
   if (NATIVE_MEDIA_RE.test(url)) return 'native';
-  // 无后缀 / 未知后缀：优先按 mpegts(TS) 尝试，实现秒播。
-  // 国内 IPTV 中转源（组播转单播、171751 等）多为 TS；若实为 HLS/FLV/MP4，
-  // mpegts 失败会回退 flv → hls → native（见 setupMpegts 的回退链）。
-  return 'mpegts';
+  // 无后缀 / 未知后缀：默认 hls（探测失败时的安全兜底），实际由服务端 detect 接口预判
+  return 'hls';
 }
 
 function proxyUrl(url: string): string {
@@ -413,8 +411,33 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
     }, 15000);
     };
 
-    // 直接按 engineOf 结果启动（无后缀已默认走 mpegts 实现秒播，失败会回退 hls/flv/native）
-    startPlayback(engineOf(url));
+    // 无后缀 URL：走服务端 detect 接口探测真实格式（服务端无 CORS 限制），
+    // 据 Content-Type 决定引擎；探测失败回退默认 hls。
+    const explicitSuffix = /\.(m3u8?|flv|ts|m2ts|mp4|m4v|webm|ogv|ogg|mov)(\?|$)/i;
+    const needsDetect = !explicitSuffix.test(url) && !isTsUrl(url) && !isFlvUrl(url) && !NATIVE_MEDIA_RE.test(url);
+
+    if (!needsDetect) {
+      startPlayback(engineOf(url));
+    } else {
+      fetch(`/api/live/detect?url=${encodeURIComponent(url)}`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d: { contentType?: string } | null) => {
+          if (disposed || destroyed) return;
+          const ct = (d?.contentType || '').toLowerCase();
+          if (ct.includes('video/mp2t') || ct.includes('video/mpeg')) {
+            startPlayback('mpegts');
+          } else if (ct.includes('video/x-flv') || ct.includes('video/flv')) {
+            startPlayback('flv');
+          } else {
+            // mpegurl / m3u8 / 其它 / 探测失败 → hls
+            startPlayback('hls');
+          }
+        })
+        .catch(() => {
+          if (disposed || destroyed) return;
+          startPlayback('hls');
+        });
+    }
 
     return () => {
       disposed = true;
