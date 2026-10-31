@@ -274,11 +274,8 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
         {
           enableWorker: false,
           enableStashBuffer: false,
-          // 降低初始缓冲，加快首帧出画（组播转单播的 TS 源起播慢，这里优先"快出画面"）
-          stashInitialSize: 64,
-          liveBufferLatencyChasing: false,
-          liveBufferLatencyMaxLatency: 2.0,
-          liveBufferLatencyMinRemain: 0.2,
+          stashInitialSize: 128,
+          liveBufferLatencyChasing: true,
           lazyLoad: false,
         }
       );
