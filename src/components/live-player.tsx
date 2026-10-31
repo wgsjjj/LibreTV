@@ -45,8 +45,7 @@ function engineOf(url: string): Engine {
   if (isFlvUrl(url)) return 'flv';
   if (isTsUrl(url)) return 'mpegts';
   if (NATIVE_MEDIA_RE.test(url)) return 'native';
-  // 无后缀 / 未知后缀：默认按 HLS 尝试（兼容"302→m3u8"的中转源，如咪咕签名流）。
-  // 若实为 TS/FLV，hls manifest 解析会快速失败并立即回退 mpegts（见 setupHls 的 ERROR 分支）。
+  // 无后缀 / 未知后缀：默认按 HLS 尝试，失败后由运行时回退链接管（见 setupHls 的 ERROR 分支）
   return 'hls';
 }
 
@@ -168,9 +167,8 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
         backBufferLength: 30,
         maxBufferLength: 20,
         maxMaxBufferLength: 40,
-        // 无后缀流（实为 TS/FLV）时 manifest 必然解析失败，重试 1 次即可，避免拖慢回退
-        manifestLoadingMaxRetry: 1,
-        manifestLoadingRetryDelay: 500,
+        manifestLoadingMaxRetry: 2,
+        manifestLoadingRetryDelay: 1000,
         fragLoadingMaxRetry: 4,
         fragLoadingRetryDelay: 800,
       };
@@ -205,14 +203,6 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
           return;
         }
         if (!playbackStarted) {
-          // 无明确后缀 + manifest 解析失败：内容大概率是 TS/FLV（hls.js 拿到的不是 m3u8），
-          // 直接回退 mpegts，跳过代理（代理对 TS 无意义）
-          const hasExplicitSuffix = /\.(m3u8?|flv|ts|m2ts|mp4|m4v|webm|ogv|ogg|mov)(\?|$)/i.test(url);
-          if (!hasExplicitSuffix && data.details === 'manifestParsingError') {
-            showHint('尝试按流媒体格式解析...');
-            void setupMpegts(video, url, true, 'mpegts', 'flv');
-            return;
-          }
           if (
             stage === 'direct' &&
             !mediaUrl.startsWith(STREAM_PROXY_PREFIX) &&
@@ -247,9 +237,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       allowProxyFallback: boolean,
       mediaType: 'flv' | 'mpegts',
       // 类型回退链：mpegts 失败可继续尝试 flv，flv 失败不再尝试（交给原生兜底）
-      nextType?: 'flv' | 'mpegts',
-      // TS/FLV 都失败后是否回退 HLS（无后缀的源也可能是带 token 的 HLS）
-      fallbackToHls = false
+      nextType?: 'flv' | 'mpegts'
     ) => {
       cleanupEngines();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -286,22 +274,16 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
         if (disposed || destroyed) return;
         if (!playbackStarted && allowProxyFallback && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
           showHint('直连失败，改用代理重试...');
-          void setupMpegts(video, proxyUrl(url), false, mediaType, nextType, fallbackToHls);
+          void setupMpegts(video, proxyUrl(url), false, mediaType, nextType);
           return;
         }
         // 当前类型失败：按类型回退链继续尝试另一种封装（无后缀的流可能是 TS 也可能是 FLV）
         if (!playbackStarted && nextType && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
           showHint('该格式未命中，尝试另一种流媒体封装...');
-          void setupMpegts(video, url, false, nextType, undefined, fallbackToHls);
+          void setupMpegts(video, url, false, nextType);
           return;
         }
-        // TS/FLV 均失败：无后缀源可能是带 token 的 HLS，回退 hls 试一次
-        if (!playbackStarted && fallbackToHls && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
-          showHint('流媒体未命中，尝试 HLS...');
-          setupHls(video, url, 'direct');
-          return;
-        }
-        // 最后回退原生播放（覆盖"无后缀但实为 MP4"的源）
+        // mpegts/flv 均失败：最后回退原生播放（覆盖"无后缀但实为 MP4"的源）
         if (!playbackStarted && !mediaUrl.startsWith(STREAM_PROXY_PREFIX)) {
           showHint('流媒体解析失败，尝试原生播放...');
           setupNative(video, url, false, `直播流加载失败（${errType}），可能该频道已失效，请尝试其他频道`);
@@ -377,8 +359,8 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
           void setupMpegts(video, url, true, 'flv', 'mpegts');
         },
         mpegts: (video: HTMLVideoElement) => {
-          // 明确 TS/udp 或无后缀流：先按 mpegts，失败回退 flv，再回退 hls
-          void setupMpegts(video, url, true, 'mpegts', 'flv', true);
+          // 明确 TS/udp 流：先按 mpegts，失败回退 flv
+          void setupMpegts(video, url, true, 'mpegts', 'flv');
         },
         mp4: (video: HTMLVideoElement) => {
           setupNative(video, url, true);
