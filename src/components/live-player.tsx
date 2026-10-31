@@ -107,6 +107,9 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
     let playbackStarted = false;
     let disposed = false;
     let destroyed = false;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let art: any = null;
+    let startTimer: ReturnType<typeof setTimeout> | null = null;
     /** 原生播放注册的 error 监听清理函数（切台/销毁时调用） */
     let nativeCleanup: (() => void) | null = null;
 
@@ -294,7 +297,7 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
       player.play().catch(() => {});
     };
 
-    const engine = engineOf(url);
+    const startPlayback = (engine: Engine) => {
     // 上一台/下一台：注册到播放器控制条（普通态与全屏均可见），未传不显示
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const controls: any[] = [];
@@ -325,8 +328,8 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
     const touchPointer = prefersTouchPointer();
     if (touchPointer) Artplayer.CONTROL_HIDE_TIME = TOUCH_CONTROL_HIDE_MS;
 
-    const art = new Artplayer({
-      container: containerRef.current,
+    art = new Artplayer({
+      container: containerRef.current!,
       url,
       // 原生容器统一用 'mp4'（仅用于选择处理函数，实际容器由浏览器嗅探）
       type: engine === 'flv' ? 'flv' : engine === 'mpegts' ? 'mpegts' : engine === 'native' ? 'mp4' : 'm3u8',
@@ -393,21 +396,51 @@ export function LivePlayer({ url, title, onPrevChannel, onNextChannel }: LivePla
     });
 
     // 15s 内未起播则提示
-    const startTimer = setTimeout(() => {
+    startTimer = setTimeout(() => {
       if (!playbackStarted && !disposed && !destroyed) {
         setError('频道加载超时，可能该源已失效，请尝试其他频道');
       }
     }, 15000);
+    };
+
+    // 无明确后缀的地址：先快速探测 Content-Type，若实为 TS/FLV 直接走 mpegts（秒播的关键）。
+    // 探测失败或超时则维持默认 hls，不影响正常 HLS 源。
+    const explicitSuffix = /\.(m3u8?|flv|ts|m2ts|mp4|m4v|webm|ogv|ogg|mov)(\?|$)/i;
+    const needsProbe = engineOf(url) === 'hls' && !explicitSuffix.test(url);
+
+    if (!needsProbe) {
+      startPlayback(engineOf(url));
+    } else {
+      // 快速 HEAD 探测：3 秒超时，拿不到就用默认 hls
+      const probeController = new AbortController();
+      const probeTimer = setTimeout(() => probeController.abort(), 3000);
+      fetch(url, { method: 'HEAD', signal: probeController.signal })
+        .then((res) => {
+          clearTimeout(probeTimer);
+          const ct = res.headers.get('content-type') || '';
+          if (ct.includes('video/mp2t') || ct.includes('video/mpeg')) {
+            startPlayback('mpegts');
+          } else if (ct.includes('video/x-flv') || ct.includes('video/flv')) {
+            startPlayback('flv');
+          } else {
+            startPlayback('hls');
+          }
+        })
+        .catch(() => {
+          clearTimeout(probeTimer);
+          startPlayback('hls');
+        });
+    }
 
     return () => {
       disposed = true;
-      clearTimeout(startTimer);
+      if (startTimer) clearTimeout(startTimer);
       if (hintTimerRef.current) clearTimeout(hintTimerRef.current);
       cleanupEngines();
-      art.destroy();
+      if (art) art.destroy();
       artRef.current = null;
       // CONTROL_HIDE_TIME 是全局 static：恢复库默认值，避免影响后续挂载的其它播放器
-      if (touchPointer) Artplayer.CONTROL_HIDE_TIME = ART_DEFAULT_CONTROL_HIDE_MS;
+      if (prefersTouchPointer()) Artplayer.CONTROL_HIDE_TIME = ART_DEFAULT_CONTROL_HIDE_MS;
       destroyed = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
