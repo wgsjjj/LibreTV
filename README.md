@@ -1,5 +1,7 @@
 # LibreTV
 
+> ⚡ **本仓库为定制版**：基于 [LibreSpark/LibreTV](https://github.com/LibreSpark/LibreTV) 修改，新增国内 IPTV 直播源兼容增强（txt 频道列表、MPEG-TS 裸流、无后缀 HLS 源自动探测）。详见 [CHANGES.md](./CHANGES.md)。
+
 LibreTV Next.js 迁移版：免费在线视频聚合搜索与观看平台。基于 Next.js 15（App Router）+ TypeScript + Tailwind CSS，播放内核为 ArtPlayer + hls.js，支持亮暗双主题。
 
 > 🏠 **官网**：[LibreTV 官网](https://libretv.is-an.org/)
