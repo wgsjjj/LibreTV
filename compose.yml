@@ -1,8 +1,7 @@
 services:
   libretv:
-    # 源码构建(推荐,避免 ghcr.io 拉取不稳);若要用发布镜像改 image 即可
-    build: .
-    image: libretv-custom:latest
+    # 拉取 GitHub Actions 构建好的镜像(无需本地源码)
+    image: ghcr.io/wgsjjj/libretv:latest
     container_name: libretv
     restart: unless-stopped
     ports:

@@ -28,25 +28,21 @@
 ### 部署
 
 ```bash
-git clone https://github.com/wgsjjj/LibreTV.git
-cd LibreTV
-
-# 将下方 compose.yml 保存到本目录（或使用仓库自带 docker-compose.yml）
-
-# 源码构建
-docker compose up -d --build
+# 新建目录，保存下方 compose.yml 后直接拉镜像启动（无需源码）
+mkdir libretv && cd libretv
+# 将下方 compose.yml 保存为 compose.yml
+docker compose up -d
 ```
 
-### 完整 compose.yml（带 15 个点播源）
+### 完整 compose.yml（拉取镜像，带 15 个点播源）
 
-将以下内容保存为 `compose.yml`（与源码同目录）：
+将以下内容保存为 `compose.yml`：
 
 ```yaml
 services:
   libretv:
-    # 源码构建（推荐，避免 ghcr.io 拉取不稳）；若要用发布镜像改 image 即可
-    build: .
-    image: libretv-custom:latest
+    # 拉取 GitHub Actions 构建好的镜像（无需本地源码）
+    image: ghcr.io/wgsjjj/libretv:latest
     container_name: libretv
     restart: unless-stopped
     ports:
